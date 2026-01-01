@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTB Tag Review</title>
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css" integrity="sha384-q94+BZtLrkL1/ohfjR8c6L+A6qzNH9R2hBLwyoAfu3i/WCvQjzL2RQJ3uNHDISdU" crossorigin="anonymous">
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background: #222; color: #eee; }
+        #container { display: flex; gap: 20px; margin-top: 20px; }
+        #board { width: 600px; }
+        #sidebar { width: 300px; background: #333; padding: 20px; border-radius: 8px; }
+        #controls { margin-top: 20px; display: flex; gap: 10px; justify-content: center; }
+        button { padding: 10px 20px; cursor: pointer; font-size: 16px; }
+        .move-list { height: 300px; overflow-y: auto; background: #444; margin-top: 10px; padding: 10px; }
+        .move { padding: 5px; cursor: pointer; }
+        .move.active { background: #666; font-weight: bold; }
+        .eval-bar-container { width: 20px; height: 600px; background: #555; position: relative; }
+        .eval-bar-fill { width: 100%; background: #eee; position: absolute; bottom: 0; transition: height 0.5s; }
+    </style>
+</head>
+<body>
+    <h1>OTB Game Review</h1>
+    <div id="container">
+        <div class="eval-bar-container">
+            <div id="evalBar" class="eval-bar-fill" style="height: 50%;"></div>
+        </div>
+        <div id="board"></div>
+        <div id="sidebar">
+            <h2>Evaluation</h2>
+            <div id="evalScore">0.0</div>
+            <h3>Moves</h3>
+            <div id="moveList" class="move-list"></div>
+            <h3>Coach</h3>
+            <div id="coachText">Good luck!</div>
+        </div>
+    </div>
+    <div id="controls">
+        <button id="btnPrev">Prev</button>
+        <button id="btnNext">Next</button>
+        <button id="btnFlip">Flip Board</button>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="data.js"></script>
+    <script>
+        // Load data
+        let gameData = null;
+        let board = null;
+        let game = new Chess();
+        let currentPly = 0;
+
+        function initBoard() {
+            board = Chessboard('board', {
+                position: 'start',
+                draggable: false
+            });
+            updateUI();
+        }
+
+        function loadGame() {
+            if (window.GAME_DATA) {
+                gameData = window.GAME_DATA;
+                renderMoveList();
+                
+                // Reconstruct game from moves to ensure validity
+                // Or if we have PGN text, we can use that.
+                // But data.js has moves.
+                // Let's just rely on gameData.moves
+            } else {
+                console.error("No GAME_DATA found. Make sure data.js is loaded.");
+            }
+        }
+
+        function updateUI() {
+            if (!gameData || !gameData.moves) return;
+            
+            // Highlight current move in list
+            $('.move').removeClass('active');
+            if (currentPly > 0) {
+                $(`#move-${currentPly-1}`).addClass('active');
+            }
+            
+            // Update Board
+            // Replay game to currentPly
+            game.reset();
+            for (let i = 0; i < currentPly; i++) {
+                if (i < gameData.moves.length) {
+                    game.move(gameData.moves[i].uci); // Use UCI to be safe
+                }
+            }
+            board.position(game.fen());
+            
+            // Update Eval
+            let cp = 0;
+            let moveInfo = null;
+            if (currentPly > 0 && currentPly <= gameData.moves.length) {
+                moveInfo = gameData.moves[currentPly - 1];
+                if (moveInfo.eval) {
+                    cp = moveInfo.eval.score_cp;
+                }
+                
+                $('#evalScore').text(cp !== undefined ? cp : "Mate");
+                $('#coachText').text(moveInfo.classification || "");
+                
+                // Update Bar
+                // sigmoid clamping for bar
+                let val = cp;
+                if (val === undefined) val = 0; // Handle mate later
+                // Sigmoid: 1 / (1 + exp(-k * cp))
+                // k=0.004 roughly maps +/- 1000 to near 0/1
+                let percent = 50;
+                if (cp !== undefined) {
+                    let s = 1 / (1 + Math.exp(-0.004 * cp));
+                    percent = s * 100;
+                }
+                $('#evalBar').css('height', percent + '%');
+            } else {
+                $('#evalScore').text("Start");
+                $('#coachText').text("Game Start");
+                $('#evalBar').css('height', '50%');
+            }
+        }
+
+        function renderMoveList() {
+            const list = $('#moveList');
+            list.empty();
+            if (!gameData.moves) return;
+            
+            gameData.moves.forEach((move, index) => {
+                const moveNum = Math.floor(index / 2) + 1;
+                const isWhite = index % 2 === 0;
+                
+                let label = "";
+                if (isWhite) {
+                    label += `${moveNum}. `;
+                }
+                label += `${move.san} `;
+                if (move.classification) {
+                    label += `(${move.classification})`;
+                }
+                
+                const div = $('<div>')
+                    .addClass('move')
+                    .attr('id', `move-${index}`)
+                    .text(label)
+                    .on('click', () => {
+                        currentPly = index + 1;
+                        updateUI();
+                    });
+                list.append(div);
+            });
+        }
+
+        $('#btnNext').on('click', () => {
+            if (gameData && gameData.moves && currentPly < gameData.moves.length) {
+                currentPly++;
+                updateUI();
+            }
+        });
+
+        $('#btnPrev').on('click', () => {
+            if (currentPly > 0) {
+                currentPly--;
+                updateUI();
+            }
+        });
+        
+        $('#btnFlip').on('click', board.flip);
+
+        $(document).ready(() => {
+            initBoard();
+            loadGame();
+        });
+    </script>
+</body>
+</html>
